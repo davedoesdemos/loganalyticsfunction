@@ -4,13 +4,16 @@ using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Host;
 using Microsoft.Extensions.Logging;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Web;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace LogAnalyticsFunction
 {
+
     public static class Function1
     {
         //https://docs.microsoft.com/en-us/rest/api/loganalytics/create-request
@@ -26,6 +29,8 @@ namespace LogAnalyticsFunction
 
             var logAnalyticsURL = config["logAnalyticsURL"];
             var workspaceID = config["workspaceID"];
+            var sharedKey = config["sharedKey"];
+            var logType = config["logType"];
 
             String outputJSON = "[\n";
             log.LogInformation($"C# Blob trigger function Processed blob\n Name:{name} \n Size: {myBlob.Length} Bytes");
@@ -45,7 +50,7 @@ namespace LogAnalyticsFunction
                 }
 
                 //Close the JSON
-                outputJSON = outputJSON + "]";
+                outputJSON = outputJSON + "\n]";
 
                 log.LogInformation("Added: " + outputJSON);
             }
@@ -63,38 +68,43 @@ namespace LogAnalyticsFunction
             String xMSDate = timestamp.ToString("R");
             String timeGenerated = timestamp.ToString("O");
 
-            //create the string for the signature then encode using Signature=Base64(HMAC-SHA256(UTF8(StringToSign)))
-            String stringToSign = "POST" + "\n" + outputJSON.Length.ToString() + "\n" + "application/json" + "\nx-ms-date:" + xMSDate + "\n" + "/api/logs";
-            HMACSHA256 hmac = new HMACSHA256(Encoding.UTF8.GetBytes(stringToSign));
-            var signature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign)));
 
-            using (var client = new HttpClient())
-            using (var request = new HttpRequestMessage())
+            // Create a hash for the API signature
+            var datestring = DateTime.UtcNow.ToString("r");
+            var jsonBytes = Encoding.UTF8.GetBytes(outputJSON);
+            string stringToHash = "POST\n" + jsonBytes.Length + "\napplication/json\n" + "x-ms-date:" + xMSDate + "\n/api/logs";
+            string hashedString = "";
+            var encoding = new System.Text.ASCIIEncoding();
+            byte[] keyByte = Convert.FromBase64String(sharedKey);
+            byte[] messageBytes = encoding.GetBytes(stringToHash);
+            using (var hmacsha256 = new HMACSHA256(keyByte))
             {
-                //Set the method to POST
-                request.Method = HttpMethod.Post;
-                //set the URI
-                request.RequestUri = new Uri(logAnalyticsURL);
+                byte[] hash = hmacsha256.ComputeHash(messageBytes);
+                hashedString = Convert.ToBase64String(hash);
+            }
 
-                //Add the authorization header Authorization: SharedKey <WorkspaceID>:<Signature>
-                request.Headers.Add("Authorization", "SharedKey " + workspaceID + ":" + signature);
-                //request.Headers.Add("Content-Type", "application/json");
-                request.Headers.Add("Log-Type", "Lustydemo");
-                request.Headers.Add("x-ms-date", xMSDate);
-                request.Headers.Add("time-generated-field", timeGenerated);
+            string signature = "SharedKey " + workspaceID + ":" + hashedString;
 
-                request.Properties.Add("CustomerID", workspaceID);
-                request.Properties.Add("Resource", "/api/logs");
-                request.Properties.Add("API Version", "2016-04-01");
+            try
+            {
+                System.Net.Http.HttpClient client = new System.Net.Http.HttpClient();
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
+                client.DefaultRequestHeaders.Add("Log-Type", logType);
+                client.DefaultRequestHeaders.Add("Authorization", signature);
+                client.DefaultRequestHeaders.Add("x-ms-date", xMSDate);
+                client.DefaultRequestHeaders.Add("time-generated-field", timeGenerated);
 
-                //Add the request body
-                StringContent contentString = new StringContent(outputJSON);
-                request.Content = contentString;
+                System.Net.Http.HttpContent httpContent = new StringContent(outputJSON, Encoding.UTF8);
+                httpContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                Task<System.Net.Http.HttpResponseMessage> response = client.PostAsync(new Uri(logAnalyticsURL), httpContent);
 
-                //Send request, get response
-                log.LogInformation(logAnalyticsURL);
-                var response = client.SendAsync(request).Result;
-                log.LogInformation(response.ToString());
+                System.Net.Http.HttpContent responseContent = response.Result.Content;
+                string result = responseContent.ReadAsStringAsync().Result;
+                log.LogInformation("Return Result: " + result);
+            }
+            catch (Exception excep)
+            {
+                log.LogInformation("API Post Exception: " + excep.Message);
             }
         }
     }
