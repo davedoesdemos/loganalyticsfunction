@@ -20,6 +20,14 @@ namespace LogAnalyticsFunction
         [FunctionName("LogsBlobToLA")]
         public static void Run([BlobTrigger("logs/{name}", Connection = "storageString")]Stream myBlob, string name, ILogger log, ExecutionContext context)
         {
+            //Get the application settings
+            //You need to have the following defined for this to work:
+            //"storageString": storage endpoint for the blob to monitor
+            //"workspaceID": The GUID ID of the Log Analytics workspace
+            //"logAnalyticsURL": "https://<yourworkspaceID>.ods.opinsights.azure.com/api/logs?api-version=2016-04-01",
+            //"sharedKey": the shared key for your workspace,
+            //"logType":  a string which will be the custom log type
+
             //https://www.koskila.net/how-to-access-azure-function-apps-settings-from-c/
             var config = new ConfigurationBuilder()
                 .SetBasePath(context.FunctionAppDirectory)
@@ -68,7 +76,7 @@ namespace LogAnalyticsFunction
             String xMSDate = timestamp.ToString("R");
             String timeGenerated = timestamp.ToString("O");
 
-
+            //https://docs.microsoft.com/en-us/azure/azure-monitor/platform/data-collector-api
             // Create a hash for the API signature
             var datestring = DateTime.UtcNow.ToString("r");
             var jsonBytes = Encoding.UTF8.GetBytes(outputJSON);
